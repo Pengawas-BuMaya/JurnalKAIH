@@ -1,0 +1,468 @@
+<!DOCTYPE html>
+<html lang="id">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Rekap Jurnal KAIH - Gugus Anggrek</title>
+   
+    <!-- 1. Styling (Tailwind CSS) -->
+    <script src="https://cdn.tailwindcss.com"></script>
+   
+    <!-- 2. React Core -->
+    <script crossorigin src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+    <script crossorigin src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+   
+    <!-- 3. Babel (Translator) -->
+    <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+   
+    <!-- 4. PapaParse (CSV Reader) -->
+    <script src="https://unpkg.com/papaparse@5.4.1/papaparse.min.js"></script>
+
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: { sans: ['Inter', 'sans-serif'] },
+                    colors: {
+                        brand: { 50: '#eff6ff', 100: '#dbeafe', 500: '#3b82f6', 600: '#2563eb', 700: '#1d4ed8', 900: '#1e3a8a' }
+                    }
+                },
+            },
+        }
+    </script>
+    <style>
+        /* Custom Scrollbar */
+        ::-webkit-scrollbar { width: 4px; height: 4px; }
+        ::-webkit-scrollbar-track { background: #f1f5f9; }
+        ::-webkit-scrollbar-thumb { background: #cbd5e1; border-radius: 4px; }
+        body { background-color: #f8fafc; }
+        
+        @media print {
+            @page { size: A4 landscape; margin: 10mm; }
+            html, body, #root, main { background-color: white !important; height: auto !important; overflow: visible !important; display: block !important; position: relative !important; }
+            nav, .no-print, .filters-container { display: none !important; }
+            .print-container { display: block !important; padding: 0 !important; margin: 0 !important; box-shadow: none !important; border: none !important; width: 100% !important; max-width: none !important; position: absolute !important; top: 0 !important; left: 0 !important; }
+            table { font-size: 9pt !important; width: 100% !important; border-collapse: collapse !important; }
+            th, td { border: 1px solid #000 !important; padding: 3px 2px !important; color: #000 !important; }
+            thead tr { background-color: #f1f5f9 !important; -webkit-print-color-adjust: exact !important; print-color-adjust: exact !important; }
+            .signature-section { page-break-inside: avoid; margin-top: 12mm !important; }
+        }
+    </style>
+</head>
+<body>
+
+    <div id="root"></div>
+
+    <script type="text/babel">
+        const { useState, useEffect, useMemo } = React;
+
+        const Icon = ({ path, className }) => (
+            <svg xmlns="http://www.w3.org/2000/svg" width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" className={className}>{path}</svg>
+        );
+
+        const Icons = {
+            Activity: (p) => <Icon {...p} path={<polyline points="22 12 18 12 15 21 9 3 6 12 2 12" />} />,
+            Printer: (p) => <Icon {...p} path={<><polyline points="6 9 6 2 18 2 18 9" /><path d="M6 18H4a2 2 0 0 1-2-2v-5a2 2 0 0 1 2-2h16a2 2 0 0 1 2 2v5a2 2 0 0 1-2 2h-2" /><rect x="6" y="14" width="12" height="8" /></>} />,
+            LogOut: (p) => <Icon {...p} path={<><path d="M9 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h4" /><polyline points="16 17 21 12 16 7" /><line x1="21" y1="12" x2="9" y2="12" /></>} />,
+            Lock: (p) => <Icon {...p} path={<><rect x="3" y="11" width="18" height="11" rx="2" ry="2" /><path d="M7 11V7a5 5 0 0 1 10 0v4" /></>} />,
+            Refresh: (p) => <Icon {...p} path={<><path d="M23 4v6h-6" /><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10" /></>} />,
+        };
+
+        const CSV_URL = 'https://docs.google.com/spreadsheets/d/e/2PACX-1vRQtyzrqaFWsmyIJvGMZryb82jAl1k9EfwD8GwgUkBYEOFQUiJwcpl8xQoWm9eHHFd5AjSpyOk0h-Jl/pub?gid=710625009&single=true&output=csv';
+
+        const HABITS = [
+            'Bangun Pagi', 'Beribadah', 'Berolahraga', 'Makan Sehat & Bergizi',
+            'Gemar Belajar', 'Bermasyarakat', 'Tidur Cepat'
+        ];
+
+        const MONTHS = ["Januari", "Februari", "Maret", "April", "Mei", "Juni", "Juli", "Agustus", "September", "Oktober", "November", "Desember"];
+        const WEEKS = [
+            { id: 1, label: 'Minggu 1 (Tgl 1-7)', start: 1, end: 7 },
+            { id: 2, label: 'Minggu 2 (Tgl 8-14)', start: 8, end: 14 },
+            { id: 3, label: 'Minggu 3 (Tgl 15-21)', start: 15, end: 21 },
+            { id: 4, label: 'Minggu 4 (Tgl 22-Akhir)', start: 22, end: 31 },
+        ];
+
+        function JurnalKAIHApp() {
+            const [isLoggedIn, setIsLoggedIn] = useState(false);
+            const [loginUser, setLoginUser] = useState('');
+            const [loginPass, setLoginPass] = useState('');
+            const [loginError, setLoginError] = useState('');
+
+            const [rawData, setRawData] = useState([]);
+            const [loading, setLoading] = useState(true);
+            const [activeTab, setActiveTab] = useState('rekap'); 
+            
+            // State untuk data dinamis
+            const [availableSchools, setAvailableSchools] = useState([]);
+            const [selectedSchool, setSelectedSchool] = useState('');
+            const [selectedClass, setSelectedClass] = useState('');
+            const [selectedDay, setSelectedDay] = useState(new Date().getDate());
+            const [selectedMonth, setSelectedMonth] = useState(new Date().getMonth());
+            const [selectedYear, setSelectedYear] = useState(new Date().getFullYear());
+            const [selectedWeekId, setSelectedWeekId] = useState(1);
+
+            const handleLogin = (e) => {
+                e.preventDefault();
+                if (loginUser === 'gugusanggrekyes' && loginPass === '123456') {
+                    setIsLoggedIn(true);
+                    setLoginError('');
+                } else {
+                    setLoginError('Username atau Password salah!');
+                }
+            };
+
+            const findColumn = (row, keywords) => {
+                const keys = Object.keys(row);
+                return keys.find(k => {
+                    const lowK = k.toLowerCase();
+                    return keywords.every(kw => lowK.includes(kw.toLowerCase()));
+                });
+            };
+
+            const getColValue = (row, keywords) => {
+                const key = findColumn(row, keywords);
+                return key ? row[key] : "";
+            };
+
+            const isChecked = (row, keywords, excludeKw = []) => {
+                const key = Object.keys(row).find(k => {
+                    const lowK = k.toLowerCase();
+                    return keywords.every(kw => lowK.includes(kw.toLowerCase())) && !excludeKw.some(ex => lowK.includes(ex));
+                });
+                const val = key ? row[key].toString().toLowerCase().trim() : "";
+                return ['ya', 'sudah', 'v', 'x', '1', 'true', 'yes', '✅'].includes(val);
+            };
+
+            const fetchData = () => {
+                setLoading(true);
+                Papa.parse(CSV_URL, {
+                    download: true, 
+                    header: true, 
+                    skipEmptyLines: true,
+                    complete: (results) => {
+                        try {
+                            const data = results.data.map(row => {
+                                const tsStr = getColValue(row, ['timestamp']) || getColValue(row, ['tanggal']);
+                                let ts = new Date();
+                                if (tsStr && tsStr.includes('/')) {
+                                    const parts = tsStr.split(' ')[0].split('/');
+                                    if (parts.length === 3) ts = new Date(parts[2], parts[1] - 1, parts[0]);
+                                } else if (tsStr) {
+                                    ts = new Date(tsStr);
+                                }
+
+                                const bgnTime = getColValue(row, ['bangun', 'waktu']) || getColValue(row, ['bangun', 'pukul']) || getColValue(row, ['jam', 'bangun']);
+                                const tdrTime = getColValue(row, ['tidur', 'waktu']) || getColValue(row, ['tidur', 'pukul']) || getColValue(row, ['jam', 'tidur']);
+                                
+                                // Deteksi kolom sekolah dengan lebih robust
+                                const schoolName = getColValue(row, ['sekolah']) || getColValue(row, ['asal']) || getColValue(row, ['lembaga']);
+
+                                return {
+                                    timestamp: ts,
+                                    school: schoolName ? schoolName.toUpperCase().trim() : "TIDAK ADA SEKOLAH",
+                                    nama: (getColValue(row, ['nama']) || "Siswa").toUpperCase().trim(),
+                                    kelas: (getColValue(row, ['kelas']) || "TIDAK ADA").toUpperCase().trim(),
+                                    h1Time: bgnTime,
+                                    h7Time: tdrTime,
+                                    h1: isChecked(row, ['bangun', 'pagi'], ['waktu', 'pukul']) || (bgnTime && bgnTime.length > 0),
+                                    h2: isChecked(row, ['ibadah']) || isChecked(row, ['sholat']),
+                                    h3: isChecked(row, ['olahraga']),
+                                    h4: isChecked(row, ['makan', 'sehat']),
+                                    h5: isChecked(row, ['belajar']),
+                                    h6: isChecked(row, ['masyarakat']),
+                                    h7: isChecked(row, ['tidur', 'cepat'], ['waktu', 'pukul']) || (tdrTime && tdrTime.length > 0)
+                                };
+                            }).filter(d => d.kelas !== "TIDAK ADA" && !isNaN(d.timestamp.getTime()));
+
+                            setRawData(data);
+                            
+                            // Extract Unique Schools from Data directly
+                            const uniqueSchools = [...new Set(data.map(d => d.school))].filter(s => s && s !== "TIDAK ADA SEKOLAH").sort();
+                            setAvailableSchools(uniqueSchools);
+                            
+                            // Set default school if available
+                            if (uniqueSchools.length > 0 && !selectedSchool) {
+                                setSelectedSchool(uniqueSchools[0]);
+                            }
+
+                            setLoading(false);
+                        } catch (err) {
+                            console.error("Parse Error:", err);
+                            setLoading(false);
+                        }
+                    }
+                });
+            };
+
+            useEffect(() => { if (isLoggedIn) fetchData(); }, [isLoggedIn]);
+
+            // Filter Classes based on Selected School ONLY
+            const availableClasses = useMemo(() => {
+                if (!selectedSchool) return [];
+                const schoolData = rawData.filter(d => d.school === selectedSchool);
+                return [...new Set(schoolData.map(d => d.kelas))].sort();
+            }, [rawData, selectedSchool]);
+
+            // Jika kelas yang dipilih tidak valid untuk sekolah saat ini, reset ke kelas pertama
+            useEffect(() => {
+                if (availableClasses.length > 0 && !availableClasses.includes(selectedClass)) {
+                    setSelectedClass(availableClasses[0]);
+                }
+            }, [availableClasses, selectedSchool]);
+
+            const processedData = useMemo(() => {
+                if (!selectedClass || !selectedSchool) return [];
+                let start = 1, end = 31;
+                if (activeTab === 'rekapMingguan') {
+                    const w = WEEKS.find(wk => wk.id === parseInt(selectedWeekId));
+                    start = w.start; end = w.end;
+                } else if (activeTab === 'rekapHarian') {
+                    start = parseInt(selectedDay); end = parseInt(selectedDay);
+                }
+
+                // Filter Strict: Sekolah harus match, Kelas harus match
+                const filtered = rawData.filter(d => {
+                    return d.school === selectedSchool &&
+                        d.kelas === selectedClass &&
+                        d.timestamp.getMonth() === parseInt(selectedMonth) &&
+                        d.timestamp.getFullYear() === parseInt(selectedYear) &&
+                        d.timestamp.getDate() >= start && d.timestamp.getDate() <= end
+                });
+
+                const map = {};
+                filtered.forEach(d => {
+                    if (!map[d.nama]) map[d.nama] = { nama: d.nama, h1: 0, h2: 0, h3: 0, h4: 0, h5: 0, h6: 0, h7: 0, h1Time: '', h7Time: '' };
+                    const s = map[d.nama];
+                    if (activeTab === 'rekapHarian') {
+                        s.h1 = d.h1; s.h2 = d.h2; s.h3 = d.h3; s.h4 = d.h4; s.h5 = d.h5; s.h6 = d.h6; s.h7 = d.h7;
+                        s.h1Time = d.h1Time; s.h7Time = d.h7Time;
+                    } else {
+                        if (d.h1) s.h1++; if (d.h2) s.h2++; if (d.h3) s.h3++; if (d.h4) s.h4++; if (d.h5) s.h5++; if (d.h6) s.h6++; if (d.h7) s.h7++;
+                    }
+                });
+
+                return Object.values(map).sort((a,b) => a.nama.localeCompare(b.nama));
+            }, [rawData, activeTab, selectedSchool, selectedClass, selectedMonth, selectedYear, selectedDay, selectedWeekId]);
+
+            if (!isLoggedIn) {
+                return (
+                    <div className="min-h-screen bg-slate-100 flex items-center justify-center p-4">
+                        <div className="bg-white p-8 rounded-3xl shadow-2xl w-full max-w-sm border border-slate-200">
+                            <div className="text-center mb-8">
+                                <div className="bg-brand-600 w-16 h-16 rounded-2xl text-white flex items-center justify-center mx-auto mb-4 shadow-lg ring-4 ring-brand-100">
+                                    <Icons.Lock className="w-8 h-8" />
+                                </div>
+                                <h1 className="text-2xl font-black text-slate-800 tracking-tight">Gugus Anggrek</h1>
+                                <p className="text-slate-500 text-sm mt-1 font-medium">Rekap Jurnal KAIH</p>
+                            </div>
+                            <form onSubmit={handleLogin} className="space-y-4">
+                                <input type="text" value={loginUser} onChange={(e) => setLoginUser(e.target.value)} className="w-full p-3.5 text-sm border-2 rounded-2xl outline-none focus:border-brand-500 transition-all bg-slate-50" placeholder="Username" />
+                                <input type="password" value={loginPass} onChange={(e) => setLoginPass(e.target.value)} className="w-full p-3.5 text-sm border-2 rounded-2xl outline-none focus:border-brand-500 transition-all bg-slate-50" placeholder="Password" />
+                                <button type="submit" className="w-full bg-brand-600 hover:bg-brand-700 text-white font-black py-3.5 rounded-2xl transition-all shadow-lg active:scale-95">MASUK SISTEM</button>
+                                {loginError && <p className="text-red-500 text-xs text-center font-bold mt-2">{loginError}</p>}
+                            </form>
+                        </div>
+                    </div>
+                );
+            }
+
+            return (
+                <div className="min-h-screen bg-slate-50 flex flex-col font-sans">
+                    <nav className="bg-white border-b sticky top-0 z-20 shadow-sm px-4 py-2 no-print">
+                        <div className="max-w-7xl mx-auto flex items-center justify-between">
+                            <div className="flex items-center gap-3">
+                                <div className="bg-brand-600 p-2 rounded-xl text-white shadow-sm"><Icons.Activity className="w-5 h-5" /></div>
+                                <div><h1 className="font-black text-slate-900 leading-none">Jurnal KAIH</h1><p className="text-[10px] text-slate-500 uppercase font-bold tracking-widest mt-1">Gugus Anggrek</p></div>
+                            </div>
+                            <div className="flex bg-slate-100 p-1 rounded-xl">
+                                {['rekap', 'rekapMingguan', 'rekapHarian'].map(tab => (
+                                    <button key={tab} onClick={() => setActiveTab(tab)} className={`px-6 py-2 text-xs font-black rounded-lg transition-all ${activeTab === tab ? 'bg-white shadow-sm text-brand-700' : 'text-slate-500 hover:text-slate-800'}`}>
+                                        {tab === 'rekap' ? 'BULANAN' : tab === 'rekapMingguan' ? 'MINGGUAN' : 'HARIAN'}
+                                    </button>
+                                ))}
+                            </div>
+                            <div className="flex gap-2">
+                                <button onClick={fetchData} className="p-2 text-slate-400 hover:text-brand-600 transition-colors"><Icons.Refresh className="w-5 h-5" /></button>
+                                <button onClick={() => setIsLoggedIn(false)} className="p-2 text-slate-400 hover:text-red-500 transition-colors"><Icons.LogOut className="w-5 h-5" /></button>
+                            </div>
+                        </div>
+                    </nav>
+
+                    <main className="flex-1 p-4 max-w-7xl mx-auto w-full">
+                         <div className="bg-white p-5 rounded-3xl border mb-6 shadow-sm no-print flex flex-wrap gap-5 items-end">
+                            <div className="flex flex-col gap-1.5 w-full md:w-auto">
+                                <label className="text-[10px] font-black text-slate-400 uppercase ml-1 tracking-wider">Pilih Sekolah</label>
+                                <select value={selectedSchool} onChange={(e) => setSelectedSchool(e.target.value)} className="text-sm p-2.5 bg-slate-50 border-2 rounded-xl font-bold text-slate-900 outline-none focus:border-brand-500 w-full md:w-64">
+                                    {availableSchools.length > 0 ? (
+                                        availableSchools.map(s => <option key={s} value={s}>{s}</option>)
+                                    ) : (
+                                        <option>Memuat data sekolah...</option>
+                                    )}
+                                </select>
+                            </div>
+
+                            <div className="flex flex-col gap-1.5">
+                                <label className="text-[10px] font-black text-slate-400 uppercase ml-1 tracking-wider">Kelas</label>
+                                <select value={selectedClass} onChange={(e) => setSelectedClass(e.target.value)} className="text-sm p-2.5 bg-slate-50 border-2 rounded-xl font-bold text-slate-700 outline-none focus:border-brand-500 min-w-[100px]">
+                                    {availableClasses.length > 0 ? availableClasses.map(c => <option key={c} value={c}>{c}</option>) : <option>Tidak ada data</option>}
+                                </select>
+                            </div>
+                            <div className="flex flex-col gap-1.5">
+                                <label className="text-[10px] font-black text-slate-400 uppercase ml-1 tracking-wider">Bulan</label>
+                                <select value={selectedMonth} onChange={(e) => setSelectedMonth(e.target.value)} className="text-sm p-2.5 bg-slate-50 border-2 rounded-xl font-bold outline-none focus:border-brand-500">
+                                    {MONTHS.map((m, i) => <option key={i} value={i}>{m}</option>)}
+                                </select>
+                            </div>
+                            <div className="flex flex-col gap-1.5">
+                                <label className="text-[10px] font-black text-slate-400 uppercase ml-1 tracking-wider">Tahun</label>
+                                <select value={selectedYear} onChange={(e) => setSelectedYear(e.target.value)} className="text-sm p-2.5 bg-slate-50 border-2 rounded-xl font-bold outline-none focus:border-brand-500">
+                                    <option value="2025">2025</option><option value="2026">2026</option>
+                                </select>
+                            </div>
+                            {activeTab === 'rekapMingguan' && (
+                                <div className="flex flex-col gap-1.5">
+                                    <label className="text-[10px] font-black text-slate-400 uppercase ml-1 tracking-wider">Minggu Ke</label>
+                                    <select value={selectedWeekId} onChange={(e) => setSelectedWeekId(e.target.value)} className="text-sm p-2.5 bg-slate-50 border-2 rounded-xl font-bold outline-none focus:border-brand-500">
+                                        {WEEKS.map(w => <option key={w.id} value={w.id}>{w.label}</option>)}
+                                    </select>
+                                </div>
+                            )}
+                            {activeTab === 'rekapHarian' && (
+                                <div className="flex flex-col gap-1.5">
+                                    <label className="text-[10px] font-black text-slate-400 uppercase ml-1 tracking-wider">Tanggal</label>
+                                    <select value={selectedDay} onChange={(e) => setSelectedDay(e.target.value)} className="text-sm p-2.5 bg-slate-50 border-2 rounded-xl font-bold outline-none focus:border-brand-500">
+                                        {Array.from({length: 31}, (_, i) => i + 1).map(d => <option key={d} value={d}>{d}</option>)}
+                                    </select>
+                                </div>
+                            )}
+                            <div className="flex-grow"></div>
+                            <button onClick={() => window.print()} className="bg-slate-900 hover:bg-black text-white px-8 py-3 rounded-2xl text-xs font-black flex items-center gap-2 transition-all shadow-xl active:scale-95 uppercase tracking-widest">
+                                <Icons.Printer className="w-4 h-4" /> Cetak Laporan
+                            </button>
+                        </div>
+
+                        {loading ? (
+                            <div className="flex flex-col items-center justify-center p-32 gap-6 bg-white rounded-3xl border shadow-sm">
+                                <div className="w-14 h-14 border-4 border-brand-500 border-t-transparent rounded-full animate-spin"></div>
+                                <p className="text-slate-700 font-black text-xl animate-pulse">MEMUAT DATA DARI SERVER...</p>
+                            </div>
+                        ) : (
+                            <div className="bg-white shadow-2xl p-10 mx-auto w-full max-w-[297mm] min-h-[210mm] print-container border-2 border-slate-900 text-slate-900 rounded-[40px] animate-fade-in relative overflow-hidden">
+                                <div className="text-center mb-12">
+                                    <h2 className="text-3xl font-black uppercase tracking-tight text-slate-900 border-b-8 border-brand-500 inline-block pb-2 mb-8">
+                                        {activeTab === 'rekapHarian' ? 'Laporan Jurnal KAIH Harian' : activeTab === 'rekapMingguan' ? 'Laporan Jurnal KAIH Mingguan' : 'Rekapitulasi Jurnal KAIH Bulanan'}
+                                    </h2>
+                                    <div className="flex justify-between mt-10 text-xs font-black border-y-4 border-slate-900 py-6 px-4 uppercase tracking-widest">
+                                        <div className="text-left space-y-2">
+                                            <p className="flex items-center gap-3"><span className="text-slate-400">Sekolah :</span> {selectedSchool}</p>
+                                            <p className="flex items-center gap-3"><span className="text-slate-400">Kelas :</span> {selectedClass || '-'}</p>
+                                        </div>
+                                        <div className="text-right space-y-2">
+                                            <p className="flex items-center justify-end gap-3"><span className="text-slate-400">Periode :</span> {activeTab === 'rekapHarian' ? `${selectedDay} ${MONTHS[selectedMonth]} ${selectedYear}` : `${MONTHS[selectedMonth]} ${selectedYear}`}</p>
+                                            {activeTab === 'rekapMingguan' && <p className="text-brand-700">{WEEKS.find(w => w.id == selectedWeekId)?.label}</p>}
+                                        </div>
+                                    </div>
+                                </div>
+
+                                <table className="w-full text-[10px] border-collapse">
+                                    <thead>
+                                        <tr className="bg-slate-900 text-white text-center font-black">
+                                            <th className="border-2 border-slate-900 p-4 w-12">NO</th>
+                                            <th className="border-2 border-slate-900 p-4 min-w-[200px] text-left">NAMA LENGKAP SISWA</th>
+                                            {HABITS.map((h, i) => (
+                                                <th key={i} className={`border-2 border-slate-900 p-2 text-[8px] leading-tight ${activeTab === 'rekapHarian' && (i===0 || i===6) ? 'w-[16%]' : 'w-[8%]'}`}>{h.toUpperCase()}</th>
+                                            ))}
+                                            <th className="border-2 border-slate-900 p-4 w-20 bg-brand-600">TOTAL</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        {processedData.length === 0 ? (
+                                            <tr><td colSpan="10" className="text-center p-24 italic text-slate-400 border-2 border-slate-900 font-bold bg-slate-50/50">DATA TIDAK DITEMUKAN PADA PERIODE INI UNTUK KELAS {selectedClass}.</td></tr>
+                                        ) : (
+                                            processedData.map((s, idx) => {
+                                                const totalScore = activeTab === 'rekapHarian' 
+                                                    ? [s.h1, s.h2, s.h3, s.h4, s.h5, s.h6, s.h7].filter(Boolean).length
+                                                    : s.h1 + s.h2 + s.h3 + s.h4 + s.h5 + s.h6 + s.h7;
+
+                                                return (
+                                                    <tr key={idx} className="text-center h-12 hover:bg-brand-50/30 transition-colors">
+                                                        <td className="border-2 border-slate-900 font-bold">{idx + 1}</td>
+                                                        <td className="border-2 border-slate-900 text-left px-4 font-black uppercase text-slate-800 tracking-tighter">{s.nama}</td>
+                                                        
+                                                        {/* Bangun Pagi */}
+                                                        <td className="border-2 border-slate-900 font-black">
+                                                            {(() => {
+                                                                if (activeTab === 'rekapHarian') {
+                                                                    // Harian: Tampilkan Centang + Waktu jika ada
+                                                                    if (!s.h1) return '-';
+                                                                    return s.h1Time ? <span className="text-[10px] leading-tight block">✓<br/>{s.h1Time}</span> : '✓';
+                                                                } else {
+                                                                    // Mingguan/Bulanan: Tampilkan Centang saja jika pernah mengisi (>0)
+                                                                    return s.h1 > 0 ? '✓' : '-';
+                                                                }
+                                                            })()}
+                                                        </td>
+
+                                                        {/* Habit 2-6 */}
+                                                        {[2,3,4,5,6].map(n => (
+                                                            <td key={n} className="border-2 border-slate-900 font-bold">
+                                                                {activeTab === 'rekapHarian' 
+                                                                    ? (s['h'+n] ? '✓' : '-') 
+                                                                    : (s['h'+n] > 0 ? '✓' : '-')}
+                                                            </td>
+                                                        ))}
+
+                                                        {/* Tidur Cepat */}
+                                                        <td className="border-2 border-slate-900 font-black">
+                                                            {(() => {
+                                                                if (activeTab === 'rekapHarian') {
+                                                                    // Harian: Tampilkan Centang + Waktu jika ada
+                                                                    if (!s.h7) return '-';
+                                                                    return s.h7Time ? <span className="text-[10px] leading-tight block">✓<br/>{s.h7Time}</span> : '✓';
+                                                                } else {
+                                                                    // Mingguan/Bulanan: Tampilkan Centang saja jika pernah mengisi (>0)
+                                                                    return s.h7 > 0 ? '✓' : '-';
+                                                                }
+                                                            })()}
+                                                        </td>
+
+                                                        <td className="border-2 border-slate-900 font-black bg-slate-100 text-brand-700 text-sm">{totalScore}</td>
+                                                    </tr>
+                                                );
+                                            })
+                                        )}
+                                        {processedData.length > 0 && processedData.length < 15 && Array.from({ length: 15 - processedData.length }).map((_, i) => (
+                                            <tr key={`empty-${i}`} className="h-12"><td colSpan="10" className="border-2 border-slate-900 bg-slate-50/10"></td></tr>
+                                        ))}
+                                    </tbody>
+                                </table>
+
+                                <div className="mt-20 flex justify-between text-[11px] font-black signature-section uppercase tracking-widest px-10">
+                                    <div className="text-center w-[300px]">
+                                        <p className="mb-28 leading-relaxed">Mengetahui,<br/>KEPALA SEKOLAH</p>
+                                        <div className="text-left inline-block">
+                                            <p className="font-black border-b-4 border-slate-900 min-w-[260px] text-center pb-2">( .................................................... )</p>
+                                            <p className="mt-3">NIP.</p>
+                                        </div>
+                                    </div>
+                                    <div className="text-center w-[300px]">
+                                        <p className="mb-28 leading-relaxed">SRAGEN, ......................... {selectedYear}<br/>GURU WALI / WALI KELAS</p>
+                                        <div className="text-left inline-block">
+                                            <p className="font-black border-b-4 border-slate-900 min-w-[260px] text-center pb-2">( .................................................... )</p>
+                                            <p className="mt-3">NIP.</p>
+                                        </div>
+                                    </div>
+                                </div>
+                            </div>
+                        )}
+                    </main>
+                </div>
+            );
+        }
+
+        const root = ReactDOM.createRoot(document.getElementById('root'));
+        root.render(<JurnalKAIHApp />);
+    </script>
+</body>
+</html>
